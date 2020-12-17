@@ -1,0 +1,588 @@
+---
+title: "Proyecto EEG Machine Learning"
+author: "Angela Maria Giraldo Duque Yuliana Ramirez Gomez"
+date: "22/11/2020"
+output:
+  html_document:
+    toc: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: false
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE )
+```
+
+# Lectura base de datos
+
+```{r}
+library(tidyverse)
+art1 <- read_csv(file = "art1.csv")
+art1
+```
+
+# Diccionario
+
+- id_ave = identificacion animal
+- t_1veziso = Ubicación del electrodo en el telencefalo. Primera vez en isolectrica.
+- t_uveznoiso = La última vez no isoelectrica.
+- t_1veznorta = Primera vez, estado sin respuesta f50 < 12,7 Hz.
+- t_norecnorta = no recuperacion de estado sin respuesta f50 < 12,7 Hz.
+- grupo_ave = Pollo - Gallina
+- edad = Edad por grupo (Adulto- Juvenil)
+- bloque = cuatro bloques por lote
+- n_corral = número de corral
+- peso_muerte = En kilogramos
+- edad_semana = Edad dada en semanas
+- dispositivo = Control (Dislocación cervical manual), MARM (Armadillo), MZIN (Rabbit Zinger), NMCD (Dislocación cervical mecanica).
+
+Para todos los tratamientos de muerte, se registraron medidas binarias sí / no para: 
+- daño_piel = piel rasgada
+- hematoma_sb = hematoma subcutaneo
+- Perdida de sangre
+
+Para control y NMCD:
+- dislo_cuello = Hubo dislocación del cuello? SI
+- nivel_dislo = nivel de dislocación cervical (c0-c1, c1-c2, c2-c3, c3-c4). NA
+- daño_vertebra = dislocación o rotura  SI
+- lon_vcd = longitud del espacio (cm) entre la vertebra cervical dislocada. NA
+- acaratida_c = Numero de arterias carotidas cortadas
+- daño_mcuello = Daño al musculo del cuello. SI
+- medula_espinal = Se corto la medula espinal. SI
+
+Para el MZIN y MARM:
+- ubicacion_pencraneo = ubicación de la penetración del craneo (cb-cn-fm-lb-lm-rb-x)
+- daño_prosencefaloi = Daño en el procencefalo izquierdo
+- daño_cerebelo
+- daño_mesencefalo
+- daño_tencefalico = Daño en el tronco encefalico
+- hematoma_cicerebro = Presencia o ausencia de un hematoma en la cavidad cerebral interna.
+
+
+- intento_fallido
+- exito_dispositivo = Causó el daño anatomico esperado, producir una muerte rapida.
+- exito_muerte = Un solo intento de aplicación sin signos de recuperación.
+- mdm_tm = Media de duracón maxima tono de mandibula.
+- mdm_rp = Media de duración maxima reflejo pupilar.
+- mdm_mn = Media de duración maxima membrana nicitante.
+- mdm_rrit = Media de duración maxima respiración ritmica
+
+
+# Depuración base de datos 
+
+```{r}
+library(janitor)
+library(Hmisc)
+library(tidyverse)
+base_datos <- art1 %>% 
+  clean_names() %>% 
+  select(id_ave = batch_birdid,
+         t_1veziso = b_firstisomidtimereltokill,
+         t_uveznoiso = b_lastnotisomidtimereltokill,
+         t_1veznorta = b_firstf50leptotgethreshmidtimerel,
+         t_norecnorta = b_lastnotf50leptotgethreshmidtimer,
+         lote = batch,
+         grupo_ave = birdtype,
+         edad = birdagegroup,
+         bloque = block,
+         n_corral = pen,
+         peso_muerte = killweight,
+         edad_semana = killagewks,
+         dispositivo = device,
+         orden_muerte = testorder,
+         daño_piel = skinbroken,
+         perdida_sangre = ext_bl,
+         hematoma_sb = subc_ht,
+         acaratida_c = carteries,
+         ubicacion_pencraneo = skullpenloc,
+         daño_prosencefaloi = l_forebrain,
+         daño_cerebelo = cerebellum,
+         daño_mesencefalo = midbrain,
+         daño_tencefalico = brainstem,
+         hematoma_cicerebro = in_bc_ht,
+         intento_fallido = failedattempt,
+         exito_dispositivo = dev_success,
+         exito_muerte = kill_success,
+         mdm_tm = maxmax_jt,
+         mdm_rp = maxmax_pup,
+         mdm_mn = maxmax_nic,
+         mdm_rrit = maxmax_rb) %>% 
+  mutate(grupo_ave = factor(grupo_ave, labels = c("pollo", "gallina")),
+         edad = factor(edad, labels = c("Adulto", "Juvenil")),
+         dispositivo = as.factor(dispositivo),
+         daño_piel = factor(daño_piel, labels = c("No", "Si")),
+         perdida_sangre = factor(perdida_sangre, labels = c("No", "Si")),
+         hematoma_sb = factor(hematoma_sb, labels = c("No", "Si")),
+         acaratida_c = as.factor(acaratida_c),
+         ubicacion_pencraneo = as.factor(ubicacion_pencraneo),
+         daño_prosencefaloi = factor(daño_prosencefaloi, labels = c("No", "Si")),
+         daño_cerebelo = factor(daño_cerebelo, labels = c("No", "Si")),
+         daño_mesencefalo = factor(daño_mesencefalo, labels = c("No", "Si")),
+         daño_tencefalico = factor(daño_tencefalico, labels = c("No", "Si")),
+         hematoma_cicerebro = factor(hematoma_cicerebro, labels = c("No", "Si")),
+         intento_fallido= as.factor(intento_fallido),
+         exito_dispositivo = factor(exito_dispositivo, labels = c("No", "Si")),
+         exito_muerte = factor(exito_muerte, labels = c("No", "Si")))
+
+base_datos
+```
+
+
+
+## Valores ausentes y varianza cercana a cero.
+
+```{r,out.width="300"}
+knitr::include_graphics("valores_ausentes.PNG")
+```
+
+
+## Nueva Data
+
+```{r}
+base <- base_datos %>% 
+  select(t_1veziso:t_1veznorta,
+         grupo_ave,
+         edad,
+         peso_muerte,
+         dispositivo,
+         daño_piel,
+         perdida_sangre,
+         acaratida_c,
+         exito_muerte,
+         mdm_tm:mdm_rrit)
+```
+
+## Resumen general
+
+```{r}
+library(skimr)
+skim(base)
+```
+
+
+# Analisis exploratorio 
+
+```{r}
+glimpse(base)
+```
+
+
+
+## Distribución variables categóricas
+
+```{r}
+base %>% 
+  select_if(is.factor) %>% 
+  pivot_longer(cols = -exito_muerte, names_to = "variable", values_to = "valor") %>% 
+  ggplot(mapping = aes(x = exito_muerte)) +
+  facet_wrap(facets = ~variable, scales = "free") +
+  geom_bar() +
+  scale_y_continuous(breaks = seq(0, 50, 10))
+```
+
+
+
+## Distribución variables numéricas
+
+### Boxplot Originales
+
+```{r}
+base %>% 
+  select(t_1veziso:t_1veznorta, peso_muerte, mdm_tm:mdm_rrit, exito_muerte) %>% 
+  pivot_longer(cols = -exito_muerte, names_to = "variable", values_to = "valor") %>% 
+  ggplot(mapping = aes(x = exito_muerte, y = valor)) +
+  facet_wrap(facets = ~variable, scales = "free_y") +
+  geom_boxplot()
+```
+
+### Boxplot Logaritmos
+
+```{r}
+base %>% 
+  select(t_1veziso:t_1veznorta, peso_muerte, mdm_tm:mdm_rrit, exito_muerte) %>% 
+  pivot_longer(cols = -exito_muerte, names_to = "variable", values_to = "valor") %>% 
+  ggplot(mapping = aes(x = exito_muerte, y = valor)) +
+  facet_wrap(facets = ~variable, scales = "free") +
+  geom_boxplot() +
+  scale_y_log10()
+```
+
+### Densidades Originales
+
+```{r}
+base %>% 
+  select(t_1veziso:t_1veznorta, peso_muerte, mdm_tm:mdm_rrit, exito_muerte) %>% 
+  pivot_longer(cols = -exito_muerte, names_to = "variable", values_to = "valor") %>% 
+  ggplot(mapping = aes(x = valor, fill = exito_muerte, color = exito_muerte)) +
+  facet_wrap(facets = ~variable, scales = "free_y") +
+  geom_density(alpha = 0.5)
+```
+
+### Densidades Logaritmos
+
+```{r}
+base %>% 
+  select(t_1veziso:t_1veznorta, peso_muerte, mdm_tm:mdm_rrit, exito_muerte) %>% 
+  pivot_longer(cols = -exito_muerte, names_to = "variable", values_to = "valor") %>% 
+  ggplot(mapping = aes(x = valor, fill = exito_muerte, color = exito_muerte)) +
+  facet_wrap(facets = ~variable, scales = "free_y") +
+  geom_density(alpha = 0.5) +
+  scale_x_log10()
+```
+
+## Datos Final
+
+```{r}
+base2 <- base %>% 
+  select(-t_1veziso)
+base2
+```
+
+# Correlaciones y Dispersiones
+
+- Escala original:
+
+```{r}
+cor(base2$t_uveznoiso, base2$t_1veznorta, use = "pairwise.complete.obs")
+```
+
+- Escala logarítmica:
+
+```{r}
+cor(log1p(base2$t_uveznoiso), log1p(base2$mdm_mn), use = "pairwise.complete.obs")
+```
+
+- Un gráfico para verificar la asociación puede ser el siguiente:
+
+```{r}
+base2 %>% 
+  ggplot(mapping = aes(x = t_uveznoiso, y = mdm_mn)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE)
+```
+
+- Un gráfico para verificar la asociación puede ser el siguiente:
+
+```{r}
+base2 %>% 
+  ggplot(mapping = aes(x = log1p(t_uveznoiso), y = log1p(mdm_mn))) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE)
+```
+
+- Gráfico de dispersión con colores para el éxito de la muerte (escala original):
+
+```{r}
+base2 %>% 
+  ggplot(mapping = aes(x = log1p(t_uveznoiso), y = log1p(mdm_mn),
+                       color = exito_muerte)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE)
+```
+
+## Todas las dispersiones vs *peso_muerte*
+
+```{r}
+base2 %>% 
+  select(t_1veznorta, peso_muerte, mdm_tm:mdm_rrit, exito_muerte) %>% 
+  pivot_longer(cols = -c(exito_muerte, peso_muerte), names_to = "variable", values_to = "valor") %>% 
+  ggplot(mapping = aes(x = log1p(peso_muerte), y = log1p(valor), color = exito_muerte)) +
+  facet_wrap(facets = ~variable, scales = "free_y") +
+  geom_point(size = 2) +
+  geom_smooth(method = "lm", se = FALSE)
+```
+
+## Todas las dispersiones vs *mdm_tm*
+
+```{r}
+base2 %>% 
+  select(t_1veznorta, peso_muerte, mdm_tm:mdm_rrit, exito_muerte) %>% 
+  pivot_longer(cols = -c(exito_muerte, mdm_tm), names_to = "variable", values_to = "valor") %>% 
+  ggplot(mapping = aes(x = log1p(mdm_tm), y = log1p(valor), color = exito_muerte)) +
+  facet_wrap(facets = ~variable, scales = "free_y") +
+  geom_point(size = 2) +
+  geom_smooth(method = "lm", se = FALSE)
+```
+
+## Correlograma (matriz de correlaciones) {.tabset .tabset-fade .tabset-pills}
+
+### Éxito de muerte = Sí
+
+```{r}
+base2 %>% 
+  mutate(acaratida_c = as.factor(acaratida_c)) %>% 
+  filter(exito_muerte == "Si") %>% 
+  select_if(is.numeric) %>% 
+  cor(use = "pairwise.complete.obs")
+```
+
+- En forma de gráfico:
+
+```{r, fig.width=9, fig.height=7}
+library(corrplot)
+base2 %>% 
+  filter(exito_muerte == "Si") %>% 
+  select_if(is.numeric) %>% 
+  cor(use = "pairwise.complete.obs") %>% 
+  corrplot(diag = FALSE,
+           type = "upper",
+           tl.srt = 25,
+           method = "pie")
+
+```
+
+
+### Éxito de muerte = No
+
+```{r}
+base2 %>% 
+  mutate(acaratida_c = as.factor(acaratida_c)) %>% 
+  filter(exito_muerte == "No") %>% 
+  select_if(is.numeric) %>% 
+  cor(use = "pairwise.complete.obs")
+```
+
+- En forma de gráfico:
+
+```{r, fig.width=9, fig.height=7}
+base2 %>% 
+  mutate(acaratida_c = as.factor(acaratida_c)) %>% 
+  filter(exito_muerte == "No") %>% 
+  select_if(is.numeric) %>% 
+  cor(use = "pairwise.complete.obs") %>% 
+  corrplot(diag = FALSE,
+           type = "upper",
+           tl.srt = 25,
+           method = "pie")
+
+```
+
+# Análisis de Componentes Principales
+
+
+```{r}
+library(FactoMineR)
+library(factoextra)
+
+data_acp <- base2 %>% 
+  mutate(acaratida_c = as.factor(acaratida_c))
+
+acp <- PCA(X = data_acp %>% select_if(is.numeric),
+           scale.unit = TRUE,
+           graph = TRUE)
+
+summary(acp)
+```
+
+## CP1 vs CP2
+
+```{r, fig.width=9}
+# Añadiendo nuevas coordenadas a la base de datos
+data_acp$cp1 <- acp$ind$coord[, 1]
+data_acp$cp2 <- acp$ind$coord[, 2]
+data_acp$cp3 <- acp$ind$coord[, 3]
+
+library(ggpubr)
+
+
+ggarrange(
+fviz_pca_var(X = acp, axes = c(1, 2), repel = TRUE),
+
+data_acp %>% 
+  ggplot(mapping = aes(x = cp1, y = cp2, color = exito_muerte)) +
+  geom_point() +
+  geom_vline(xintercept = 0, lty = 2) +
+  geom_hline(yintercept = 0, lty = 2) +
+  theme(legend.position = "top"),
+
+ncol = 2
+  
+  
+)
+```
+
+
+## CP1 vs CP3
+
+```{r}
+ggarrange(
+fviz_pca_var(X = acp, axes = c(1, 3), repel = TRUE),
+
+data_acp %>% 
+  ggplot(mapping = aes(x = cp1, y = cp3, color = exito_muerte)) +
+  geom_point() +
+  geom_vline(xintercept = 0, lty = 2) +
+  geom_hline(yintercept = 0, lty = 2) +
+  theme(legend.position = "top"),
+
+ncol = 2
+  
+  
+)
+```
+
+## CP2 vs CP3
+
+```{r}
+ggarrange(
+fviz_pca_var(X = acp, axes = c(2, 3), repel = TRUE),
+
+data_acp %>% 
+  ggplot(mapping = aes(x = cp2, y = cp3, color = exito_muerte)) +
+  geom_point() +
+  geom_vline(xintercept = 0, lty = 2) +
+  geom_hline(yintercept = 0, lty = 2) +
+  theme(legend.position = "top"),
+
+ncol = 2
+  
+  
+)
+```
+
+## CP1 vs CP2 vs CP3
+
+```{r, fig.width=9}
+library(plotly)
+plot_ly(x = ~cp1,
+        y = ~cp2,
+        z = ~cp3,
+        color = ~exito_muerte,
+        data = data_acp) %>% 
+  add_markers()
+```
+
+# Arbol de decisión
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(jcolors)
+library(hrbrthemes)
+library(rpart)
+library(rpart.plot)
+library(caret)
+library(Metrics)
+library(pROC)
+```
+
+
+
+## Binarización de variables
+
+
+```{r}
+library(fastDummies)
+bd <- dummy_cols(base2,
+                 select_columns = c("daño_piel",
+                                    "perdida_sangre",
+                                    "exito_muerte"),
+                 remove_selected_columns = TRUE) %>% 
+  select(t_uveznoiso:peso_muerte,
+         mdm_tm:mdm_rrit,
+         daño_piel = daño_piel_Si,
+         perdida_sangre = perdida_sangre_Si,
+         exito_muerte = exito_muerte_Si)
+```
+
+
+
+
+
+
+## Distribución de la variable respuesta: Exito de muerte
+
+```{r}
+bd %>% 
+  ggplot(mapping = aes(x = exito_muerte, fill = exito_muerte)) +
+  geom_bar(color = "black") + 
+  scale_fill_manual(values = c("#5A5156", "#F6222E")) +
+  theme_ipsum() +
+  theme(legend.position = "none")
+```
+
+## Train- test
+
+```{r}
+set.seed(1992)
+idx <- createDataPartition(y = bd$exito_muerte, times = 1, p = 0.70, list = FALSE)
+dataTrain <- bd[idx, ]
+dataTest <- bd[-idx, ]
+```
+
+
+```{r}
+modArbol0 <- rpart(exito_muerte ~. , data = dataTrain, method = "class", control = rpart.control (minsplit = 2))
+
+modArbol0
+
+rpart.plot(modArbol0)
+plotcp(modArbol0)
+```
+
+```{r}
+library(visNetwork)
+visTree(modArbol0, 
+        main = "Árbol con poda", width = "100%",
+        height = "800px",  edgesFontSize = 14, nodesFontSize = 16,)
+```
+
+## Predicción
+
+```{r}
+predict_unseen <-predict(modArbol0, dataTest, type = 'class')
+
+table_mat <- table(dataTest$exito_muerte, predict_unseen)
+table_mat
+```
+
+
+## Matriz de confusión
+
+```{r}
+predichos_mod0 <- predict(object = modArbol0, newdata = dataTest, type = "class")
+confusionMatrix(data = predichos_mod0, reference = as.factor(dataTest$exito_muerte))
+              
+
+```
+
+## Podando el arbol
+
+```{r}
+modArbol0_prune <- prune(tree = modArbol0, cp = 0.072)
+modArbol0_prune
+
+rpart.plot(modArbol0_prune)
+```
+```{r}
+library(visNetwork)
+visTree(modArbol0_prune, 
+        main = "Árbol con poda", width = "100%",
+        height = "800px",  edgesFontSize = 14, nodesFontSize = 16,)
+```
+
+## Predicción
+
+```{r}
+predict_unseen <-predict(modArbol0_prune, dataTest, type = 'class')
+
+table_mat <- table(dataTest$exito_muerte, predict_unseen)
+table_mat
+```
+
+## Matriz de confusion arbol con poda
+
+```{r}
+predichos_mod0_prune <- predict(object = modArbol0_prune, newdata = dataTest, type = "class")
+confusionMatrix(data = predichos_mod0_prune, reference = as.factor(dataTest$exito_muerte))
+```
+
+
+
+
+
+
+
+
